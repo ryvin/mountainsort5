@@ -1,0 +1,13 @@
+{
+    "geom": [
+        0.0,
+        0.0
+    ],
+    "params": {
+        "samplerate": 24000,
+        "scale_factor": 0.01,
+        "spike_sign": -1
+    },
+    "raw": "sha1://c7e66be5e0f7fefa6a27677d9bd5af8cd44a2890?label=raw.mda",
+    "self_reference": "sha1://1770e652b3dc727e742549f76862b715dfcdd6c7?label=SYNTH_MONOTRODE/neurocube_quiroga_easy1/C_Easy1_noise005.json"
+}
