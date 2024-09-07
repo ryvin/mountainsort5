@@ -11,7 +11,11 @@ import spikeinterface.comparison as sc
 import spikeinterface.widgets as sw
 import mountainsort5 as ms5
 from mountainsort5.util import create_cached_recording
+from spikeinterface.core import concatenate_sortings
 import matplotlib.pyplot as plt
+
+import spikeinterface
+print(spikeinterface.__version__)
 
 def load_npy_file(file_path):
     data = np.load(file_path)
@@ -45,17 +49,39 @@ def load_ground_truth(file_path, samplerate):
     spike_times = ground_truth_data[:, 1].astype(int)
     spike_labels = ground_truth_data[:, 2].astype(int)
     
-    # Create a dictionary of spike trains
-    spike_trains = {}
-    for label in np.unique(spike_labels):
-        spike_trains[label] = spike_times[spike_labels == label]
+    # Create arrays for unit IDs and spike trains
+    unit_ids = np.unique(spike_labels)
+    spike_trains = [spike_times[spike_labels == unit_id] for unit_id in unit_ids]
     
-    # Create a SortingExtractor
-    sorting_true = se.NumpySorting.from_times_labels(spike_times=spike_trains, sampling_frequency=samplerate)
+    # Create a SortingExtractor with the correct method
+    sorting_true = se.NumpySorting.from_times_labels(
+        times_list=spike_trains,
+        labels_list=unit_ids.tolist(),
+        sampling_frequency=samplerate
+    )
     
     return sorting_true
 
+def ensure_same_segments(sorting1, sorting2, recording):
+    if sorting1.get_num_segments() != sorting2.get_num_segments():
+        print(f"Number of segments in sorting1: {sorting1.get_num_segments()}")
+        print(f"Number of segments in sorting2: {sorting2.get_num_segments()}")
+        print(f"Mismatch in number of segments. Converting to single-segment sorting.")
+
+        # Register the original recording with the sorting objects
+        sorting1.register_recording(recording)
+        sorting2.register_recording(recording)
+
+        # Concatenate sortings
+        sorting1 = concatenate_sortings([sorting1])
+        sorting2 = concatenate_sortings([sorting2])
+    return sorting1, sorting2
+
 def main():
+    # Other parts of the code
+    # Ensure recording is defined
+    #recording = load_recording()  # Assuming there is a function that loads the recording
+
     # Data file information
     data_info = {
         "params": {
@@ -132,6 +158,9 @@ def main():
         ground_truth_path = os.path.join(script_dir, "C_Easy1_noise005.firings_true.npy")
         if os.path.exists(ground_truth_path):
             sorting_true = load_ground_truth(ground_truth_path, data_info["params"]["samplerate"])
+
+            # Ensure same number of segments
+            sorting_true, sorting = ensure_same_segments(sorting_true, sorting, recording)
 
             # Compare with ground truth
             print('Comparing with ground truth')

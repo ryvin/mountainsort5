@@ -18,7 +18,7 @@ setup(
     long_description_content_type='text/markdown',
     packages=find_packages(),
     install_requires=[
-        'spikeinterface>=0.97.1',
+        'spikeinterface>=0.100.0',
         'isosplit6>=0.1.0',
         'scikit-learn'
     ],
