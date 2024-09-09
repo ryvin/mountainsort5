@@ -252,7 +252,7 @@ def match_and_relabel_units(sorting, sorting_true, delta_frames=10):
     print(f"Debug: Ground truth units: {sorting_true.get_unit_ids()}")
 
     # Compute the confusion matrix
-    confusion_matrix = np.zeros((len(sorting.get_unit_ids()), len(sorting_true.get_unit_ids())))
+    confusion_matrix = match_spikes(sorting_true, sorting, delta_frames)
     for i, unit1 in enumerate(sorting.get_unit_ids()):
         spikes1 = sorting.get_unit_spike_train(unit1)
         for j, unit2 in enumerate(sorting_true.get_unit_ids()):
@@ -403,6 +403,33 @@ def calculate_performance_metrics(sorting_true, sorting_tested, delta_frames=10)
             }
     
     return unit_metrics
+
+def match_spikes(sorting1, sorting2, delta_frames=10):
+    """
+    Match spikes between two sortings with a time window.
+    
+    Args:
+        sorting1, sorting2 (si.BaseSorting): Sortings to compare
+        delta_frames (int): Number of frames to allow for spike time differences
+    
+    Returns:
+        np.ndarray: Confusion matrix
+    """
+    confusion_matrix = np.zeros((len(sorting1.get_unit_ids()), len(sorting2.get_unit_ids())))
+    
+    # Calculate overall time offset
+    all_spikes1 = np.concatenate([sorting1.get_unit_spike_train(u) for u in sorting1.get_unit_ids()])
+    all_spikes2 = np.concatenate([sorting2.get_unit_spike_train(u) for u in sorting2.get_unit_ids()])
+    time_offset = np.median(all_spikes1) - np.median(all_spikes2)
+    
+    for i, unit1 in enumerate(sorting1.get_unit_ids()):
+        spikes1 = sorting1.get_unit_spike_train(unit1)
+        for j, unit2 in enumerate(sorting2.get_unit_ids()):
+            spikes2 = sorting2.get_unit_spike_train(unit2) + time_offset
+            matches = np.sum(np.min(np.abs(spikes1[:, None] - spikes2[None, :]), axis=1) <= delta_frames)
+            confusion_matrix[i, j] = matches
+    
+    return confusion_matrix
 
 def main():
     # Data file information
