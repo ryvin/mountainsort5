@@ -73,10 +73,19 @@ def load_ground_truth(file_path, samplerate):
         se.NumpySorting: Ground truth sorting object.
     """
     ground_truth_data = np.load(file_path)
+    print("Debug: Ground truth data shape:", ground_truth_data.shape)
+    print("Debug: Ground truth data first few rows:")
+    print(ground_truth_data[:10])
+    
     spike_times = ground_truth_data[:, 1].astype(int)
     spike_labels = ground_truth_data[:, 2].astype(int)
     unit_ids = np.unique(spike_labels)
     spike_trains = [spike_times[spike_labels == unit_id] for unit_id in unit_ids]
+    
+    print("Debug: Number of unique units:", len(unit_ids))
+    print("Debug: Unit IDs:", unit_ids)
+    print("Debug: Spike counts per unit:", [len(st) for st in spike_trains])
+    
     sorting_true = se.NumpySorting.from_times_labels(
         times_list=spike_trains,
         labels_list=unit_ids.tolist(),
@@ -147,9 +156,9 @@ def parameter_tuning(recording_cached, ground_truth, data_info):
         float: Best performance score.
     """
     # Define parameter ranges to test
-    detect_thresholds = [5, 6, 7, 8]
-    npca_per_channels = [3, 5, 7]
-    detect_time_radius_msecs = [0.3, 0.5, 0.7]
+    detect_thresholds = [3, 4, 5, 6, 7, 8, 9, 10]
+    npca_per_channels = [3, 5, 7, 9]
+    detect_time_radius_msecs = [0.3, 0.5, 0.7, 0.9]
 
     best_sorting = None
     best_params = None
@@ -187,6 +196,7 @@ def parameter_tuning(recording_cached, ground_truth, data_info):
                 }
                 
                 print(f"Params: {current_params}, Score: {score}, Units: {len(sorting.get_unit_ids())}")
+                print(f"Performance: {performance}")
                 
                 if score > best_score or best_sorting is None:
                     best_score = score
@@ -234,7 +244,7 @@ def match_and_relabel_units(sorting, sorting_true):
     # Create a new sorting object with relabeled units
     return se.NumpySorting.from_unit_dict(relabeled_spike_trains, sampling_frequency=sorting.get_sampling_frequency())
 
-def match_and_relabel_units(sorting, sorting_true, delta_frames=10):
+def match_and_relabel_units(sorting, sorting_true, delta_frames=120):
     """
     Match units from sorting to sorting_true and relabel them accordingly,
     allowing for small time differences in spike times.
@@ -251,16 +261,17 @@ def match_and_relabel_units(sorting, sorting_true, delta_frames=10):
     print(f"Debug: Sorting units: {sorting.get_unit_ids()}")
     print(f"Debug: Ground truth units: {sorting_true.get_unit_ids()}")
 
-    # Compute the confusion matrix
-    confusion_matrix = match_spikes(sorting_true, sorting, delta_frames)
+    confusion_matrix = np.zeros((max(len(sorting.get_unit_ids()), len(sorting_true.get_unit_ids())),
+                                 max(len(sorting.get_unit_ids()), len(sorting_true.get_unit_ids()))))
+
     for i, unit1 in enumerate(sorting.get_unit_ids()):
         spikes1 = sorting.get_unit_spike_train(unit1)
         for j, unit2 in enumerate(sorting_true.get_unit_ids()):
-            spikes2 = sorting_true.get_unit_spike_train(unit2)
-            matches = 0
-            for spike in spikes1:
-                if np.any(np.abs(spikes2 - spike) <= delta_frames):
-                    matches += 1
+            spikes2 = []
+            for segment in range(sorting_true.get_num_segments()):
+                spikes2.extend(sorting_true.get_unit_spike_train(unit2, segment_index=segment))
+            spikes2 = np.array(spikes2)
+            matches = np.sum(np.min(np.abs(spikes1[:, None] - spikes2[None, :]), axis=1) <= delta_frames)
             confusion_matrix[i, j] = matches
 
     print("Debug: Confusion matrix:")
@@ -270,7 +281,7 @@ def match_and_relabel_units(sorting, sorting_true, delta_frames=10):
     row_ind, col_ind = linear_sum_assignment(-confusion_matrix)
 
     # Create a mapping from old labels to new labels
-    label_map = {sorting.get_unit_ids()[i]: sorting_true.get_unit_ids()[j] for i, j in zip(row_ind, col_ind)}
+    label_map = {sorting.get_unit_ids()[i]: sorting_true.get_unit_ids()[j] for i, j in zip(row_ind, col_ind) if j < len(sorting_true.get_unit_ids())}
     print(f"Debug: Label map: {label_map}")
 
     # Relabel the sorting
@@ -404,7 +415,7 @@ def calculate_performance_metrics(sorting_true, sorting_tested, delta_frames=10)
     
     return unit_metrics
 
-def match_spikes(sorting1, sorting2, delta_frames=10):
+def match_spikes(sorting1, sorting2, delta_frames=120):  # 5ms at 24kHz
     """
     Match spikes between two sortings with a time window.
     
@@ -417,19 +428,55 @@ def match_spikes(sorting1, sorting2, delta_frames=10):
     """
     confusion_matrix = np.zeros((len(sorting1.get_unit_ids()), len(sorting2.get_unit_ids())))
     
-    # Calculate overall time offset
-    all_spikes1 = np.concatenate([sorting1.get_unit_spike_train(u) for u in sorting1.get_unit_ids()])
-    all_spikes2 = np.concatenate([sorting2.get_unit_spike_train(u) for u in sorting2.get_unit_ids()])
-    time_offset = np.median(all_spikes1) - np.median(all_spikes2)
-    
     for i, unit1 in enumerate(sorting1.get_unit_ids()):
-        spikes1 = sorting1.get_unit_spike_train(unit1)
+        spikes1 = []
+        for segment in range(sorting1.get_num_segments()):
+            spikes1.extend(sorting1.get_unit_spike_train(unit1, segment_index=segment))
+        spikes1 = np.array(spikes1)
+        
         for j, unit2 in enumerate(sorting2.get_unit_ids()):
-            spikes2 = sorting2.get_unit_spike_train(unit2) + time_offset
+            spikes2 = sorting2.get_unit_spike_train(unit2)
             matches = np.sum(np.min(np.abs(spikes1[:, None] - spikes2[None, :]), axis=1) <= delta_frames)
             confusion_matrix[i, j] = matches
     
     return confusion_matrix
+
+def plot_spike_comparison(sorting, sorting_true, window_start=0, window_end=10000):
+    fig, ax = plt.subplots(figsize=(15, 5))
+    for i, unit in enumerate(sorting.get_unit_ids()):
+        spike_train = sorting.get_unit_spike_train(unit)
+        mask = (spike_train >= window_start) & (spike_train < window_end)
+        ax.plot(spike_train[mask], [i]*sum(mask), '|', markersize=10, label=f'Sorted Unit {unit}')
+    
+    for i, unit in enumerate(sorting_true.get_unit_ids()):
+        spike_trains = []
+        for segment in range(sorting_true.get_num_segments()):
+            spike_trains.extend(sorting_true.get_unit_spike_train(unit, segment_index=segment))
+        spike_train = np.array(spike_trains)
+        mask = (spike_train >= window_start) & (spike_train < window_end)
+        ax.plot(spike_train[mask], [i-0.5]*sum(mask), '|', markersize=10, label=f'Ground Truth Unit {unit}')
+    
+    ax.set_xlabel('Time (samples)')
+    ax.set_ylabel('Unit')
+    ax.set_title('Sorted vs Ground Truth Spike Times')
+    ax.legend()
+    plt.tight_layout()
+    plt.savefig('spike_comparison.png')
+    plt.close()
+
+def print_sample_spike_times(sorting, sorting_true):
+    print("Sample spike times:")
+    for unit in sorting.get_unit_ids():
+        spike_train = sorting.get_unit_spike_train(unit)
+        print(f"Sorted Unit {unit}: {spike_train[:10]}")
+    
+    for unit in sorting_true.get_unit_ids():
+        spike_trains = []
+        for segment in range(sorting_true.get_num_segments()):
+            spike_trains.extend(sorting_true.get_unit_spike_train(unit, segment_index=segment))
+        print(f"Ground Truth Unit {unit}: {spike_trains[:10]}")
+
+
 
 def main():
     # Data file information
@@ -489,6 +536,10 @@ def main():
 
             print(f'Best parameters: {best_params}')
             print(f'Best score: {best_score}')
+
+           # Plot spike times
+            print_sample_spike_times(best_sorting, sorting_true)
+            plot_spike_comparison(best_sorting, sorting_true)
 
             # Print sorting results
             print('Sorting results:')
